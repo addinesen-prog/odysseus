@@ -49,11 +49,51 @@ class SecurityWorkflowBranchTests(unittest.TestCase):
                     {"main", "dev"},
                 )
 
+    def test_pull_request_checks_cover_main_and_dev(self):
+        for name in _SECURITY_WORKFLOWS:
+            with self.subTest(workflow=name):
+                pull_request = _block(
+                    (_WORKFLOWS / name).read_text(), "pull_request", 2
+                )
+                branches = re.search(
+                    r"(?m)^    branches:\s*\[([^\]]+)\]\s*$", pull_request
+                )
+                self.assertIsNotNone(branches)
+                self.assertEqual(
+                    {branch.strip() for branch in branches.group(1).split(",")},
+                    {"main", "dev"},
+                )
+
+    def test_security_workflows_never_use_privileged_pr_triggers(self):
+        for name in _SECURITY_WORKFLOWS:
+            with self.subTest(workflow=name):
+                text = (_WORKFLOWS / name).read_text()
+                self.assertNotIn("pull_request_target", text)
+                self.assertNotRegex(text, r"(?m)^  workflow_run:")
+
+    def test_write_or_publish_jobs_cannot_run_on_pull_requests(self):
+        for name in _SECURITY_WORKFLOWS:
+            jobs = _block((_WORKFLOWS / name).read_text(), "jobs", 0)
+            for job in re.findall(r"(?m)^  ([\w-]+):\s*$", jobs):
+                body = _block(jobs, job, 2)
+                if not re.search(
+                    r":\s*write\b|upload-sarif|push:\s*true", body
+                ):
+                    continue
+                with self.subTest(workflow=name, job=job):
+                    condition = re.search(r"(?m)^    if:\s*(.+)$", body)
+                    self.assertIsNotNone(condition)
+                    self.assertRegex(
+                        condition.group(1),
+                        r"^github\.event_name == 'push' && ",
+                    )
+
     def test_pull_request_and_manual_entry_points_remain(self):
         for name in _SECURITY_WORKFLOWS:
             with self.subTest(workflow=name):
                 text = (_WORKFLOWS / name).read_text()
                 self.assertRegex(text, r"(?m)^  pull_request:\s*$")
+                self.assertRegex(text, r"(?m)^  push:\s*$")
                 self.assertRegex(text, r"(?m)^  workflow_dispatch:\s*$")
 
     def test_security_workflows_keep_default_deny_tokens(self):
